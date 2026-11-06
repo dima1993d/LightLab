@@ -6,7 +6,9 @@ android {
   applicationId 'com.lightlab.s22'
   minSdk 26
   targetSdk 28
-  versionCode 1
-  versionName '1.0'
+  versionCode 4
+  versionName '4.0'
+  externalNativeBuild { cmake { arguments '-DANDROID_STL=none' } }
  }
+ externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt' version '3.22.1' } }
 }
