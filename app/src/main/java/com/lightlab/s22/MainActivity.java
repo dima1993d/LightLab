@@ -2,66 +2,82 @@ package com.lightlab.s22;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.os.Build;
 import android.graphics.Color;
-import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
-import android.hardware.SensorManager;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+import android.hardware.display.DisplayManager;
+import android.view.Display;
+import java.io.File;
 import java.util.Locale;
 
-public class MainActivity extends Activity implements SensorEventListener {
- SensorManager manager;
- Sensor light;
- TextView status, touchStatus, white;
- float lux = Float.NaN, baseline = Float.NaN;
- boolean touchEnabled = true;
- @Override public void onCreate(Bundle b) {
-  super.onCreate(b);
+public class MainActivity extends Activity {
+ TextView report, test;
+ boolean white=true;
+ final StringBuilder log=new StringBuilder();
+ @Override public void onCreate(Bundle state) {
+  super.onCreate(state);
   getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-  manager = (SensorManager)getSystemService(SENSOR_SERVICE);
-  light = manager.getDefaultSensor(Sensor.TYPE_LIGHT);
-  LinearLayout root = new LinearLayout(this);
+  LinearLayout root=new LinearLayout(this);
   root.setOrientation(LinearLayout.VERTICAL);
-  root.setBackgroundColor(Color.rgb(22,22,26));
-  root.setPadding(18,18,18,18);
-  status = new TextView(this); status.setTextColor(Color.WHITE); status.setTextSize(19);
-  root.addView(status);
-  touchStatus = new TextView(this); touchStatus.setTextColor(Color.WHITE); touchStatus.setTextSize(16);
-  touchStatus.setText("Touch: none"); root.addView(touchStatus);
-  Button calibrate = new Button(this); calibrate.setText("Set current lux as baseline");
-  calibrate.setOnClickListener(v -> {baseline=lux; updateStatus();}); root.addView(calibrate);
-  Button toggle = new Button(this); toggle.setText("Touch detection: ON");
-  toggle.setOnClickListener(v -> {touchEnabled=!touchEnabled;toggle.setText("Touch detection: "+(touchEnabled?"ON":"OFF"));touchStatus.setText("Touch: "+(touchEnabled?"enabled":"disabled"));}); root.addView(toggle);
-  white = new TextView(this); white.setBackgroundColor(Color.WHITE); white.setTextColor(Color.BLACK);
-  white.setGravity(Gravity.CENTER); white.setTextSize(22);
-  white.setText("WHITE TEST AREA\n\nPlace finger here\n\nAmbient light is measured by phone sensor, NOT OLED pixels");
-  root.addView(white,new LinearLayout.LayoutParams(-1,0,1));
-  white.setOnTouchListener((v,event)->{
-   if(touchEnabled) {
-    if(event.getActionMasked()==MotionEvent.ACTION_DOWN || event.getActionMasked()==MotionEvent.ACTION_MOVE)
-     touchStatus.setText(String.format(Locale.US,"Touch: x %.0f, y %.0f",event.getX(),event.getY()));
-    else if(event.getActionMasked()==MotionEvent.ACTION_UP || event.getActionMasked()==MotionEvent.ACTION_CANCEL)
-     touchStatus.setText("Touch: released");
+  root.setPadding(16,16,16,16);
+  root.setBackgroundColor(Color.rgb(24,24,28));
+  TextView title=new TextView(this);
+  title.setText("AMOLED Electrical Sensing Probe");
+  title.setTextColor(Color.WHITE); title.setTextSize(21); root.addView(title);
+  TextView note=new TextView(this);
+  note.setText("No touch, camera or ambient light sensor is used. This app checks whether the display exposes a readable electrical sensing interface. A white area alone cannot detect light.");
+  note.setTextColor(Color.LTGRAY); root.addView(note);
+  Button scan=new Button(this); scan.setText("SCAN DISPLAY INTERFACES"); root.addView(scan);
+  Button toggle=new Button(this); toggle.setText("SWITCH WHITE / BLACK"); root.addView(toggle);
+  test=new TextView(this); test.setText("DISPLAY TEST AREA"); test.setTextColor(Color.BLACK);
+  test.setGravity(Gravity.CENTER); test.setBackgroundColor(Color.WHITE);
+  root.addView(test,new LinearLayout.LayoutParams(-1,0,1));
+  ScrollView scroll=new ScrollView(this);
+  report=new TextView(this);report.setTextColor(Color.WHITE);report.setTextSize(13);
+  scroll.addView(report);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,2));
+  scan.setOnClickListener(v->scan());
+  toggle.setOnClickListener(v->{white=!white;test.setBackgroundColor(white?Color.WHITE:Color.BLACK);test.setTextColor(white?Color.BLACK:Color.WHITE);});
+  setContentView(root);scan();
+ }
+ void append(String s){log.append(s).append("\n");}
+ void probe(String path){
+  File f=new File(path);
+  if(!f.exists())return;
+  append(path+" exists; readable="+f.canRead()+"; writable="+f.canWrite());
+ }
+ void scan(){
+  log.setLength(0);
+  append("DEVICE: "+Build.MANUFACTURER+" "+Build.MODEL);
+  append("BOARD: "+Build.BOARD+" / "+Build.HARDWARE);
+  append("ANDROID: "+Build.VERSION.RELEASE+" API "+Build.VERSION.SDK_INT);
+  append("KERNEL: "+System.getProperty("os.version"));
+  Display d=getWindowManager().getDefaultDisplay();
+  android.util.DisplayMetrics m=new android.util.DisplayMetrics();d.getRealMetrics(m);
+  append(String.format(Locale.US,"DISPLAY: %d x %d, %.1f Hz",m.widthPixels,m.heightPixels,d.getRefreshRate()));
+  append("Display ID: "+d.getDisplayId()+" name: "+d.getName());
+  append("\nPROBING EXISTENCE AND ACCESS (NO WRITES):");
+  String[] dirs={"/sys/class/drm","/sys/class/graphics","/sys/class/backlight","/sys/class/lcd","/sys/devices/platform","/dev/dri","/dev/graphics"};
+  for(String dir:dirs){
+   File f=new File(dir);
+   append(dir+": "+(f.exists()?"exists, readable="+f.canRead():"not accessible"));
+   if(f.isDirectory() && f.canRead()){
+    File[] children=f.listFiles();
+    if(children!=null)for(int i=0;i<Math.min(children.length,30);i++){
+     String name=children[i].getName();
+     if(name.contains("panel")||name.contains("lcd")||name.contains("drm")||name.contains("backlight")||name.contains("fb")||name.contains("card")||name.contains("dsi"))probe(children[i].getAbsolutePath());
+    }
    }
-   return true;
-  });
-  updateStatus();
-  setContentView(root);
+  }
+  append("\nRESULT: No public Android API provides AMOLED pixel photocurrent readings.");
+  append("An accessible driver path does NOT prove it provides sensing data.");
+  append("This scan cannot establish that no private kernel interface exists.");
+  append("No camera, touchscreen, or ambient-light sensor data collected.");
+  report.setText(log.toString());
  }
- void updateStatus(){
-  String value = Float.isNaN(lux)?"waiting":String.format(Locale.US,"%.1f lux",lux);
-  String delta = Float.isNaN(baseline)?"not calibrated":String.format(Locale.US,"%+.1f lux",lux-baseline);
-  status.setText("Ambient light: "+(light==null?"Sensor unavailable":value)+"\nChange from baseline: "+delta);
- }
- @Override protected void onResume(){super.onResume();if(light!=null)manager.registerListener(this,light,SensorManager.SENSOR_DELAY_UI);}
- @Override protected void onPause(){manager.unregisterListener(this);super.onPause();}
- @Override public void onSensorChanged(SensorEvent event){if(event.sensor.getType()==Sensor.TYPE_LIGHT){lux=event.values[0];updateStatus();}}
- @Override public void onAccuracyChanged(Sensor sensor,int accuracy){}
 }
