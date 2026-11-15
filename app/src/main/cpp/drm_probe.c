@@ -12,7 +12,7 @@ struct ver {int a,b,c;unsigned long nl;char *n;unsigned long dl;char *d;unsigned
 struct res {uint64_t fb,crtc,conn,enc;uint32_t nf,nc,nn,ne,minw,maxw,minh,maxh;};
 struct connector {uint64_t enc,mode,props,values;uint32_t nm,np,ne,id,type,typeid,connection,mmw,mmh,subpixel,pad;};
 struct objprops {uint64_t props,values;uint32_t count,id,type;};
-struct prop {uint64_t values,enum_blob;uint32_t id,flags,name_count,count_values,count_enum;char name[32];};
+struct prop {uint64_t values,enum_blob;uint32_t id,flags;char name[32];uint32_t count_values,count_enum;};
 #define VERSION _IOWR('d',0x00,struct ver)
 #define RES _IOWR('d',0xa0,struct res)
 #define CONNECTOR _IOWR('d',0xa7,struct connector)
