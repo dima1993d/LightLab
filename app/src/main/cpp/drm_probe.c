@@ -7,60 +7,62 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
-
-struct drm_version_local {
- int version_major,version_minor,version_patchlevel;
- unsigned long name_len; char *name;
- unsigned long date_len; char *date;
- unsigned long desc_len; char *desc;
-};
-struct drm_get_cap_local { uint64_t capability; uint64_t value; };
-struct drm_mode_card_res_local {
- uint64_t fb_id_ptr, crtc_id_ptr, connector_id_ptr, encoder_id_ptr;
- uint32_t count_fbs,count_crtcs,count_connectors,count_encoders;
- uint32_t min_width,max_width,min_height,max_height;
-};
-#define DRM_VERSION_REQ _IOWR('d',0x00,struct drm_version_local)
-#define DRM_GET_CAP_REQ _IOWR('d',0x0c,struct drm_get_cap_local)
-#define DRM_GET_RES_REQ _IOWR('d',0xa0,struct drm_mode_card_res_local)
-static char output[12000]; static size_t used;
-static void line(const char *fmt,...) {
- if(used>=sizeof(output)-2)return;
- va_list args;va_start(args,fmt);
- int n=vsnprintf(output+used,sizeof(output)-used,fmt,args);va_end(args);
- if(n>0)used+=(size_t)n<sizeof(output)-used?(size_t)n:sizeof(output)-used-1;
-}
-static void probe(const char *path) {
- line("\n%s\n",path);
+#include <stdlib.h>
+struct ver {int a,b,c;unsigned long nl;char *n;unsigned long dl;char *d;unsigned long xl;char *x;};
+struct res {uint64_t fb,crtc,conn,enc;uint32_t nf,nc,nn,ne,minw,maxw,minh,maxh;};
+struct connector {uint64_t enc,mode,props,values;uint32_t nm,np,ne,id,type,typeid,connection,mmw,mmh,subpixel,pad;};
+struct objprops {uint64_t props,values;uint32_t count,id,type;};
+struct prop {uint64_t values,enum_blob;uint32_t id,flags,name_count,count_values,count_enum;char name[32];};
+#define VERSION _IOWR('d',0x00,struct ver)
+#define RES _IOWR('d',0xa0,struct res)
+#define CONNECTOR _IOWR('d',0xa7,struct connector)
+#define OBJPROPS _IOWR('d',0xb9,struct objprops)
+#define PROPERTY _IOWR('d',0xaa,struct prop)
+#define DRM_MODE_OBJECT_CONNECTOR 0xc0c0c0c0U
+static char out[24000];static size_t used;
+static void add(const char *fmt,...){if(used>=sizeof(out)-2)return;va_list a;va_start(a,fmt);int n=vsnprintf(out+used,sizeof(out)-used,fmt,a);va_end(a);if(n>0){size_t room=sizeof(out)-used-1;used+=(size_t)n<room?(size_t)n:room;}}
+static void check(const char *path,int stage){
  int fd=open(path,O_RDONLY|O_CLOEXEC|O_NONBLOCK);
- if(fd<0){line("open: FAILED errno=%d (%s)\n",errno,strerror(errno));return;}
- line("open: SUCCESS\n");
- char name[256]={0},date[128]={0},desc[512]={0};
- struct drm_version_local v={0};
- v.name_len=sizeof(name)-1;v.name=name;
- v.date_len=sizeof(date)-1;v.date=date;
- v.desc_len=sizeof(desc)-1;v.desc=desc;
- if(ioctl(fd,DRM_VERSION_REQ,&v)==0)
-  line("DRM_IOCTL_VERSION: SUCCESS\ndriver=%s version=%d.%d.%d date=%s\ndescription=%s\n",name,v.version_major,v.version_minor,v.version_patchlevel,date,desc);
- else line("DRM_IOCTL_VERSION: FAILED errno=%d (%s)\n",errno,strerror(errno));
- const uint64_t caps[]={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
- for(int i=0;i<16;i++){
-  struct drm_get_cap_local cap={caps[i],0};
-  if(ioctl(fd,DRM_GET_CAP_REQ,&cap)==0)
-   line("GET_CAP %llu: SUCCESS value=%llu\n",(unsigned long long)caps[i],(unsigned long long)cap.value);
-  else line("GET_CAP %llu: FAILED errno=%d (%s)\n",(unsigned long long)caps[i],errno,strerror(errno));
+ add("\n%s: ",path);
+ if(fd<0){add("OPEN FAIL errno=%d\n",errno);return;}
+ add("OPEN OK\n");
+ char name[128]={0};struct ver v={0};v.nl=127;v.n=name;
+ if(ioctl(fd,VERSION,&v)){add("DRM_VERSION FAIL errno=%d\n",errno);close(fd);return;}
+ add("DRM_VERSION OK driver=%s\n",name);
+ if(stage==0){close(fd);return;}
+ struct res r={0};
+ if(ioctl(fd,RES,&r)){add("GETRESOURCES FAIL errno=%d\n",errno);close(fd);return;}
+ add("GETRESOURCES OK connectors=%u crtcs=%u\n",r.nn,r.nc);
+ if(stage==1||r.nn==0||r.nn>64){close(fd);return;}
+ uint32_t *ids=calloc(r.nn,sizeof(uint32_t));
+ if(!ids){close(fd);return;}
+ r.conn=(uintptr_t)ids;
+ if(ioctl(fd,RES,&r)){add("GETRESOURCES IDs FAIL errno=%d\n",errno);free(ids);close(fd);return;}
+ for(uint32_t i=0;i<r.nn&&i<12;i++){
+  struct connector c={0};c.id=ids[i];
+  if(ioctl(fd,CONNECTOR,&c)){add("connector %u GETCONNECTOR FAIL errno=%d\n",ids[i],errno);continue;}
+  add("connector %u type=%u connection=%u properties=%u\n",ids[i],c.type,c.connection,c.np);
+  if(stage<3)continue;
+  struct objprops op={0};op.id=ids[i];op.type=DRM_MODE_OBJECT_CONNECTOR;
+  if(ioctl(fd,OBJPROPS,&op)){add(" OBJ_GETPROPERTIES FAIL errno=%d\n",errno);continue;}
+  if(op.count>128){add(" too many properties\n");continue;}
+  uint32_t *pids=calloc(op.count?op.count:1,sizeof(uint32_t));
+  uint64_t *vals=calloc(op.count?op.count:1,sizeof(uint64_t));
+  if(!pids||!vals){free(pids);free(vals);continue;}
+  op.props=(uintptr_t)pids;op.values=(uintptr_t)vals;
+  if(ioctl(fd,OBJPROPS,&op)){add(" property values FAIL errno=%d\n",errno);}
+  else for(uint32_t j=0;j<op.count&&j<60;j++){
+   struct prop p={0};p.id=pids[j];
+   if(ioctl(fd,PROPERTY,&p)==0)add("  %s = %llu (flags=%u)\n",p.name,(unsigned long long)vals[j],p.flags);
+   else add("  property %u read FAIL errno=%d\n",pids[j],errno);
+  }
+  free(pids);free(vals);
  }
- struct drm_mode_card_res_local r={0};
- if(ioctl(fd,DRM_GET_RES_REQ,&r)==0)
-  line("MODE_GETRESOURCES: SUCCESS crtc=%u connectors=%u encoders=%u fb=%u\n",r.count_crtcs,r.count_connectors,r.count_encoders,r.count_fbs);
- else line("MODE_GETRESOURCES: FAILED errno=%d (%s)\n",errno,strerror(errno));
- close(fd);
+ free(ids);close(fd);
 }
-JNIEXPORT jstring JNICALL Java_com_lightlab_s22_MainActivity_nativeProbe(JNIEnv *env,jclass clazz){
- used=0;output[0]=0;
- line("Native read-only DRM ioctl probe. No display writes.\n");
- probe("/dev/dri/card0");probe("/dev/dri/card1");
- probe("/dev/dri/renderD128");probe("/dev/dri/renderD129");
- line("\nThese DRM operations do not measure OLED photocurrent.\n");
- return (*env)->NewStringUTF(env,output);
+JNIEXPORT jstring JNICALL Java_com_lightlab_s22_MainActivity_nativeStage(JNIEnv *env,jclass clazz,jint stage){
+ used=0;out[0]=0;add("Read-only DRM discovery stage %d\n",stage);
+ check("/dev/dri/card0",stage);check("/dev/dri/card1",stage);
+ add("\nNo pixel photocurrent has been measured.\n");
+ return (*env)->NewStringUTF(env,out);
 }
