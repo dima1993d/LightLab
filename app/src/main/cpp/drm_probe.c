@@ -34,10 +34,21 @@ static void check(const char *path,int stage){
  if(ioctl(fd,RES,&r)){add("GETRESOURCES FAIL errno=%d\n",errno);close(fd);return;}
  add("GETRESOURCES OK connectors=%u crtcs=%u\n",r.nn,r.nc);
  if(stage==1||r.nn==0||r.nn>64){close(fd);return;}
- uint32_t *ids=calloc(r.nn,sizeof(uint32_t));
- if(!ids){close(fd);return;}
- r.conn=(uintptr_t)ids;
- if(ioctl(fd,RES,&r)){add("GETRESOURCES IDs FAIL errno=%d\n",errno);free(ids);close(fd);return;}
+ // Supply buffers for ALL nonzero resource counts, not just connectors.
+ // The v5 EFAULT likely arose from null CRTC/encoder pointers.
+ uint32_t connector_count=r.nn,crtc_count=r.nc,encoder_count=r.ne,fb_count=r.nf;
+ if(crtc_count>128||encoder_count>128||fb_count>4096){add("Unsafe resource count\n");close(fd);return;}
+ uint32_t *ids=calloc(connector_count?connector_count:1,sizeof(uint32_t));
+ uint32_t *crtcs=calloc(crtc_count?crtc_count:1,sizeof(uint32_t));
+ uint32_t *encoders=calloc(encoder_count?encoder_count:1,sizeof(uint32_t));
+ uint32_t *fbs=calloc(fb_count?fb_count:1,sizeof(uint32_t));
+ if(!ids||!crtcs||!encoders||!fbs){add("Allocation failed\n");free(ids);free(crtcs);free(encoders);free(fbs);close(fd);return;}
+ r.conn=(uintptr_t)ids;r.crtc=(uintptr_t)crtcs;r.enc=(uintptr_t)encoders;r.fb=(uintptr_t)fbs;
+ if(ioctl(fd,RES,&r)){
+  add("GETRESOURCES IDs FAIL errno=%d (%s)\n",errno,strerror(errno));
+  free(ids);free(crtcs);free(encoders);free(fbs);close(fd);return;
+ }
+ add("GETRESOURCES IDs OK connectors=%u crtcs=%u encoders=%u fbs=%u\n",r.nn,r.nc,r.ne,r.nf);
  for(uint32_t i=0;i<r.nn&&i<12;i++){
   struct connector c={0};c.id=ids[i];
   if(ioctl(fd,CONNECTOR,&c)){add("connector %u GETCONNECTOR FAIL errno=%d\n",ids[i],errno);continue;}
@@ -58,7 +69,7 @@ static void check(const char *path,int stage){
   }
   free(pids);free(vals);
  }
- free(ids);close(fd);
+ free(ids);free(crtcs);free(encoders);free(fbs);close(fd);
 }
 JNIEXPORT jstring JNICALL Java_com_lightlab_s22_MainActivity_nativeStage(JNIEnv *env,jclass clazz,jint stage){
  used=0;out[0]=0;add("Read-only DRM discovery stage %d\n",stage);
